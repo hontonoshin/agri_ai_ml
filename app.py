@@ -205,8 +205,10 @@ if not clients:
     st.stop()
 
 language = st.sidebar.selectbox("Til / Язык / Language", ["uz", "ru", "en"], index=0)
+client_keys = list(clients)
+default_client_index = client_keys.index("tashkent") if "tashkent" in client_keys else 0
 client_key = st.sidebar.selectbox(
-    t("client", language), list(clients),
+    t("client", language), client_keys, index=default_client_index,
     format_func=lambda key: clients[key]["meta"].get("label", key),
 )
 entry = clients[client_key]
@@ -218,6 +220,13 @@ run_key = entry["manifest"].get("completed_at") or str(
 state, anomalies, summary, observations, geometry, fields = load_client(
     str(entry["dir"]), run_key
 )
+
+# Clients prepared before the five-index upgrade contain only NDVI/NDRE/NDMI.
+# Keep those clients usable while showing EVI/SAVI automatically wherever the
+# newer columns exist.  Never select or chart a configured index merely because
+# it is present in config.py: the actual client files are the source of truth.
+state_indices = [name for name in INDICES if name in state.columns]
+history_indices = [name for name in INDICES if name in observations.columns]
 
 st.title(entry["meta"].get("label", client_key))
 st.caption("Sentinel-2 · Copernicus Data Space Ecosystem")
@@ -394,9 +403,9 @@ table[t("season", language)] = [
 ]
 table["crop_label"] = table["crop"].map(lambda c: crop_label(c, language))
 table["state_label"] = table["state"].map(lambda s: t(f"state_{s}", language))
-display_columns = ["name", "crop_label", "area_ha", "date", "ndvi", "ndre", "ndmi", "evi", "savi"]
+display_columns = ["name", "crop_label", "area_ha", "date", *state_indices]
 display_names = [t("parcel", language), t("crop", language), t("area", language),
-                 t("as_of", language), "NDVI", "NDRE", "NDMI", "EVI", "SAVI"]
+                 t("as_of", language), *[name.upper() for name in state_indices]]
 if "ml_risk" in table:
     table["ml_risk_pct"] = 100.0 * pd.to_numeric(table["ml_risk"], errors="coerce")
     display_columns.append("ml_risk_pct")
@@ -426,9 +435,10 @@ row = state[state["field_id"] == field_id].iloc[0]
 stage = season_stage(row["crop"], pd.Timestamp(row["date"]).dayofyear, language)
 st.caption(f"{crop_label(row['crop'], language)} · {t('season', language)}: **{stage}**")
 has_ml = "ml_risk" in state.columns and pd.notna(row.get("ml_risk"))
-detail_columns = st.columns(len(INDICES) + 1 + int(has_ml))
+detail_columns = st.columns(len(state_indices) + 1 + int(has_ml))
 detail_columns[0].metric(t("as_of", language), str(row["date"]))
-for position, (name, spec) in enumerate(INDICES.items(), 1):
+for position, name in enumerate(state_indices, 1):
+    spec = INDICES[name]
     value = row.get(name)
     percentile = row.get(f"{name}_pct")
     column = detail_columns[position]
@@ -464,8 +474,11 @@ if len(history):
     history["year"] = history["date"].dt.year.astype(str)
     history["doy"] = history["date"].dt.dayofyear
     st.markdown(f"**{t('history', language)}**")
-    tabs = st.tabs([spec.get(f"label_{language}", spec["label_en"]) for spec in INDICES.values()])
-    for tab, name in zip(tabs, INDICES):
+    tabs = st.tabs([
+        INDICES[name].get(f"label_{language}", INDICES[name]["label_en"])
+        for name in history_indices
+    ])
+    for tab, name in zip(tabs, history_indices):
         with tab:
             try:
                 import altair as alt
