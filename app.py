@@ -1,4 +1,5 @@
-"""Client canopy-monitoring dashboard
+"""
+Client canopy-monitoring dashboard
 
     streamlit run app.py
 """
